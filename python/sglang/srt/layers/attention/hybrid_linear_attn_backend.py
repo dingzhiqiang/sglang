@@ -665,6 +665,8 @@ class MambaAttnBackendBase(AttentionBackend):
         """Copy extend SSM state at the last chunk boundary to track slots (source
         depends on chunk alignment; see `_init_track_ssm_indices`)."""
         if forward_metadata.has_mamba_track_mask:
+            if h is None:
+                return
             h = h.squeeze(0)
 
             if forward_metadata.track_ssm_h_src.numel() > 0:

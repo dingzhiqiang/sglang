@@ -205,7 +205,7 @@ class KDAKernelDispatcher:
         cache_indices: torch.Tensor,
         query_start_loc: torch.Tensor,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
         return self.extend_kernel.extend(
             q,
             k,
@@ -359,6 +359,9 @@ class KDAAttnBackend(MambaAttnBackendBase):
             lower_bound=lower_bound,
         )
 
+        # Track SSM/conv states for prefix caching during decode.
+        # The kernel updates ssm_states in-place; copy the updated states to
+        # persistent track slots so the radix cache can store them.
         if not forward_batch.forward_mode.is_target_verify():
             self._track_mamba_state_decode(
                 forward_batch, conv_states, ssm_states, cache_indices
@@ -479,6 +482,7 @@ class KDAAttnBackend(MambaAttnBackendBase):
         k = k.unflatten(-1, (-1, layer.head_k_dim)).unsqueeze(0)  # n (h d) -> 1 n h d
         v = v.unflatten(-1, (-1, layer.head_v_dim)).unsqueeze(0)  # n (h d) -> 1 n h d
 
+        h = None
         if is_target_verify:
             core_attn_out = self.kernel_dispatcher.target_verify(
                 A_log=layer.A_log,
@@ -498,14 +502,27 @@ class KDAAttnBackend(MambaAttnBackendBase):
                 lower_bound=getattr(layer, "lower_bound", None),
             )
         else:
-            core_attn_out = self.kernel_dispatcher.extend(
-                q=q, k=k, v=v, g=a, beta=b,
-                ssm_states=ssm_states, cache_indices=cache_indices,
-                query_start_loc=query_start_loc, A_log=layer.A_log,
+            core_attn_out, h = self.kernel_dispatcher.extend(
+                q=q,
+                k=k,
+                v=v,
+                g=a,
+                beta=b,
+                ssm_states=ssm_states,
+                cache_indices=cache_indices,
+                query_start_loc=query_start_loc,
+                A_log=layer.A_log,
                 dt_bias=layer.dt_bias,
                 lower_bound=getattr(layer, "lower_bound", None),
                 extend_seq_lens_cpu=extend_seq_lens_cpu,
                 is_spec_decode=forward_batch.forward_mode.is_draft_extend_v2(),
+            )
+
+        # Track SSM states at chunk boundaries for prefix caching.
+        # The h tensor from the FLA kernel contains per-chunk boundary states.
+        if h is not None and not forward_batch.forward_mode.is_target_verify():
+            self._track_mamba_state_extend(
+                forward_batch, h, ssm_states, self.forward_metadata
             )
 
         return core_attn_out
