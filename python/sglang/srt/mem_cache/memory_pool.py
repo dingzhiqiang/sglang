@@ -532,8 +532,15 @@ class MambaPool:
                 # `conv_window_dedup_enabled` for the full rationale. The
                 # `fused_conv_window_scatter_with_mask` scatter is layout-agnostic,
                 # so the dense fallback reads correctly through the same code path.
+                # Dedup assumes a physical (dim, K-1) layout and overlaps the
+                # last axis across draft steps. KDA/Kimi stores (K-1, dim), so
+                # applying the same as_strided layout would alias feature columns
+                # rather than consecutive conv-window positions.
                 dedup_conv_window = conv_window_dedup_enabled(
                     _is_npu, _is_cpu, speculative_eagle_topk
+                ) and all(
+                    conv_shape[-1] == cache_params.shape.conv_kernel - 1
+                    for conv_shape in conv_state_shape
                 )
                 self._intermediate_conv_window_phys = []
                 if dedup_conv_window:
