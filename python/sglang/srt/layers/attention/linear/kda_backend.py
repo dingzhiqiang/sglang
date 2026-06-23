@@ -416,6 +416,7 @@ class KDAAttnBackend(MambaAttnBackendBase):
             retrieve_next_sibling = self.forward_metadata.retrieve_next_sibling
             retrieve_parent_token = self.forward_metadata.retrieve_parent_token
 
+            # Reshape mixed_qkv: (seq_len, dim) -> (batch_size, dim, draft_token_num)
             mixed_qkv_reshaped = mixed_qkv.reshape(
                 batch_size, draft_token_num, -1
             ).transpose(1, 2)
