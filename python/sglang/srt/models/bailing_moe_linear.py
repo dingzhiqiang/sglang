@@ -440,7 +440,6 @@ class BailingMoELinearAttention(nn.Module):
         self.tp_heads = self.total_num_heads // self.tp_size
 
         self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = getattr(config, "rope_theta", 600000)
 
         self.tp_kv_heads = self.total_kv_heads // self.tp_size
         self.q_size_per_rank = self.head_dim * self.tp_heads
@@ -530,8 +529,8 @@ class BailingMoELinearAttention(nn.Module):
             self.head_dim,
             rotary_dim=rotary_dim,
             max_position=self.max_position_embeddings,
-            base=self.rope_theta,
-            rope_scaling=config.rope_scaling,
+            base=config.rope_parameters.get("rope_theta", 600000),
+            rope_scaling=config.rope_parameters,
             is_neox_style=True,
             device=get_server_args().device,
             dtype=torch.float32,
@@ -687,13 +686,12 @@ class BailingMoEAttention(nn.Module):
         else:
             self.rotary_dim = self.head_dim
         self.max_position_embeddings = config.max_position_embeddings
-        self.rope_theta = getattr(config, "rope_theta", 600000)
         self.rotary_emb = get_rope_wrapper(
             self.head_dim,
             rotary_dim=self.rotary_dim,
             max_position=self.max_position_embeddings,
-            base=self.rope_theta,
-            rope_scaling=config.rope_scaling,
+            base=config.rope_parameters.get("rope_theta", 600000),
+            rope_scaling=config.rope_parameters,
             device=get_server_args().device,
         )
         self.attn = RadixAttention(
@@ -1595,6 +1593,16 @@ class BailingMoELinearForCausalLM(nn.Module):
         self.post_load_weights(is_nextn=is_nextn, weight_names=weight_names)
 
         return loaded_params
+
+    def post_process_weights_if_quant(self):
+        for name, module in self.named_modules():
+            quant_method = getattr(module, "quant_method", None)
+            if quant_method is not None:
+                post_process = getattr(
+                    quant_method, "process_weights_after_loading", None
+                )
+                if post_process is not None:
+                    post_process(module)
 
 
 class BailingMoeV2_5ForCausalLM(BailingMoELinearForCausalLM):

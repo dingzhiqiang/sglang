@@ -35,6 +35,23 @@ if TYPE_CHECKING:
     from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 
 
+def _zero_linear_attn_padding(
+    attn_output: torch.Tensor, forward_batch: ForwardBatch, seq_dim: int = 0
+) -> torch.Tensor:
+    real_num_tokens = forward_batch.get_num_non_padded_tokens(
+        attn_output.shape[seq_dim],
+    )
+    if real_num_tokens is None:
+        return attn_output
+
+    if real_num_tokens < attn_output.shape[seq_dim]:
+        zero_slice = [slice(None)] * attn_output.dim()
+        zero_slice[seq_dim] = slice(real_num_tokens, None)
+        attn_output[tuple(zero_slice)] = 0
+
+    return attn_output
+
+
 class RadixLinearAttention(nn.Module):
     """
     The Linear Attention Layer Implementation.
@@ -55,6 +72,7 @@ class RadixLinearAttention(nn.Module):
         activation: str = "silu",
         A_log: Optional[torch.Tensor] = None,
         dt_bias: Optional[torch.Tensor] = None,
+        lower_bound: Optional[float] = None,
     ):
         super().__init__()
         self.layer_id = layer_id
@@ -74,6 +92,7 @@ class RadixLinearAttention(nn.Module):
 
         self.A_log = A_log
         self.dt_bias = dt_bias
+        self.lower_bound = lower_bound
 
     def forward(
         self,
@@ -81,6 +100,7 @@ class RadixLinearAttention(nn.Module):
         mixed_qkv: torch.Tensor,
         a: torch.Tensor,
         b: torch.Tensor,
+        **kwargs,
     ) -> torch.Tensor:
         if (
             forward_batch.forward_mode.is_extend()
@@ -109,15 +129,22 @@ class RadixLinearAttention(nn.Module):
                     output,
                     self.layer_id,
                 )
-            return output
         else:
-            return get_attn_backend().forward(
+            output = get_attn_backend().forward(
                 layer=self,
                 forward_batch=forward_batch,
                 mixed_qkv=mixed_qkv,
                 a=a,
                 b=b,
+                **kwargs,
             )
+
+        # Linear-attention kernels generally return either (1, seq_len, heads,
+        # dim) or token-major (seq_len, ...). Do not infer batch-major layout
+        # from shape[0] == 1 alone: token-major single-token outputs also have
+        # shape[0] == 1.
+        seq_dim = 1 if output.dim() == 4 and output.shape[0] == 1 else 0
+        return _zero_linear_attn_padding(output, forward_batch, seq_dim=seq_dim)
 
 
 @register_custom_op(mutates_args=["output"])
@@ -136,7 +163,7 @@ def unified_linear_attention_with_output(
     forward_batch = context.forward_batch
     attention_layers = context.attention_layers
     attention_layer = attention_layers[layer_id]
-    real_num_tokens = forward_batch.num_token_non_padded_cpu
+    real_num_tokens = forward_batch.get_num_non_padded_tokens(output.shape[1])
 
     original_out_cache_loc = forward_batch.out_cache_loc
     # Keep the original ForwardBatch object and only narrow cache locations for

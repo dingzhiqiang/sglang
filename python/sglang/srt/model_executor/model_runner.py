@@ -2277,7 +2277,7 @@ class ModelRunner(ModelRunnerKVCacheMixin):
     @property
     def hybrid_lightning_config(self):
         config = self.model_config.hf_config
-        if isinstance(config, BailingHybridConfig):
+        if isinstance(config, BailingHybridConfig) and not config.use_kda:
             return config
         return None
 
@@ -2342,6 +2342,8 @@ class ModelRunner(ModelRunnerKVCacheMixin):
     def kimi_linear_config(self):
         config = self.model_config.hf_config
         if isinstance(config, KimiLinearConfig):
+            return config
+        if isinstance(config, BailingHybridConfig) and config.use_kda:
             return config
         return None
 

@@ -251,6 +251,7 @@ class BailingMoESparseMoeBlock(nn.Module):
             topk_group=self.topk_group,
             correction_bias=self.correction_bias,
             routed_scaling_factor=self.routed_scaling_factor,
+            layer_id=self.layer_id,
         )
 
         self.experts = get_moe_impl_class(quant_config)(
