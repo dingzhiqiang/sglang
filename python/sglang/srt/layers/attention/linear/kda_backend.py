@@ -14,6 +14,7 @@ from sglang.srt.layers.attention.mamba.causal_conv1d_triton import (
     causal_conv1d_update,
 )
 from sglang.srt.layers.radix_linear_attention import RadixLinearAttention
+from sglang.srt.mem_cache.memory_pool import MambaPool
 from sglang.srt.utils import is_cpu, is_cuda, is_npu
 from sglang.srt.utils.common import rank0_log
 
@@ -243,6 +244,8 @@ class KDAAttnBackend(MambaAttnBackendBase):
             conv_state_indices=cache_indices,
         )
 
+        lower_bound = kwargs.get("lower_bound", getattr(layer, "lower_bound", None))
+
         # Skip split + reshape by consuming the packed mixed_qkv directly in a
         # single fused Triton kernel (KDA per-K gate variant of GDN PR #20627).
         #
@@ -258,12 +261,13 @@ class KDAAttnBackend(MambaAttnBackendBase):
                 "KDA packed decode requires one token per sequence (T=1): "
                 f"got {qkv.shape[0]} tokens for {cache_indices.shape[0]} requests."
             )
-            return self.kernel_dispatcher.packed_decode(
+            result = self.kernel_dispatcher.packed_decode(
                 mixed_qkv=qkv,
                 a=a,
                 b=b,
                 A_log=layer.A_log,
                 dt_bias=layer.dt_bias,
+                lower_bound=lower_bound,
                 scale=layer.head_k_dim**-0.5,
                 ssm_states=ssm_states,
                 cache_indices=cache_indices,
@@ -275,13 +279,18 @@ class KDAAttnBackend(MambaAttnBackendBase):
                 replayssm_write_pos=replayssm_write_pos,
                 replayssm_force_flush=replayssm_force_flush,
             )
+            if not forward_batch.forward_mode.is_target_verify():
+                self._track_mamba_state_decode(
+                    forward_batch, conv_states, ssm_states, cache_indices
+                )
+            return result
 
         q, k, v = qkv.split([layer.q_dim, layer.k_dim, layer.v_dim], dim=-1)
         q = q.unflatten(-1, (-1, layer.head_q_dim)).unsqueeze(0)  # n (h d) -> 1 n h d
         k = k.unflatten(-1, (-1, layer.head_k_dim)).unsqueeze(0)  # n (h d) -> 1 n h d
         v = v.unflatten(-1, (-1, layer.head_v_dim)).unsqueeze(0)  # n (h d) -> 1 n h d
 
-        return self.kernel_dispatcher.decode(
+        result = self.kernel_dispatcher.decode(
             q=q,
             k=k,
             v=v,
@@ -292,7 +301,15 @@ class KDAAttnBackend(MambaAttnBackendBase):
             ssm_states=ssm_states,
             cache_indices=cache_indices,
             query_start_loc=query_start_loc,
+            lower_bound=lower_bound,
         )
+
+        if not forward_batch.forward_mode.is_target_verify():
+            self._track_mamba_state_decode(
+                forward_batch, conv_states, ssm_states, cache_indices
+            )
+
+        return result
 
     def forward_extend(
         self,

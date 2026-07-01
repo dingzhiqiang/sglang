@@ -38,6 +38,7 @@ class TritonKDAKernel(LinearAttnKernelBase):
         cache_indices: torch.Tensor,
         num_v_heads: int,
         head_v_dim: int,
+        lower_bound: Optional[float] = None,
         **kwargs,
     ) -> torch.Tensor:
         """Packed decode fast path: feed the conv-1d output ``mixed_qkv``
@@ -62,7 +63,8 @@ class TritonKDAKernel(LinearAttnKernelBase):
         replayssm_write_pos = kwargs.get("replayssm_write_pos")
         replayssm_force_flush = kwargs.get("replayssm_force_flush")
         if (
-            replayssm_d is not None
+            lower_bound is None
+            and replayssm_d is not None
             and replayssm_k is not None
             and replayssm_g is not None
             and replayssm_write_pos is not None
@@ -105,6 +107,7 @@ class TritonKDAKernel(LinearAttnKernelBase):
             out=out,
             ssm_state_indices=cache_indices,
             use_qk_l2norm_in_kernel=True,
+            lower_bound=lower_bound,
         )
         # [B, 1, HV, V] -> [1, B, HV, V] view to match existing decode layout.
         return out.transpose(0, 1)
