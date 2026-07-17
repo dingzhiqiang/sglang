@@ -1370,6 +1370,16 @@ class TestGoldenModelOverrides(_IsolatedPublish):
                 "mamba_radix_cache_strategy": "extra_buffer",
             },
         )
+        # BailingMoeV3 uses KDA state alongside its token KV cache. It must
+        # route through the hybrid radix-cache path and supports extra-buffer
+        # tracking on the Triton backend.
+        self.assertEqual(
+            _mamba_radix_cache_resolution(_view("BailingMoeV3ForCausalLM")),
+            {
+                "uses_mamba_radix_cache": True,
+                "mamba_radix_cache_strategy": "extra_buffer",
+            },
+        )
         # auto + no extra-buffer support (Lfm2) -> no_buffer + overlap disable
         self.assertEqual(
             _mamba_radix_cache_resolution(_view("Lfm2ForCausalLM")),
