@@ -111,7 +111,7 @@ from sglang.srt.observability.req_time_stats import (
 from sglang.srt.runtime_context import get_parallel, get_server_args
 from sglang.srt.sampling.sampling_batch_info import SamplingBatchInfo
 from sglang.srt.sampling.sampling_params import SamplingParams
-from sglang.srt.server_args import ServerArgs
+from sglang.srt.server_args import FLA_CHUNK_SIZE, ServerArgs
 from sglang.srt.utils import flatten_nested_list
 from sglang.srt.utils.cuda_ipc_transport_utils import CudaIpcTensorTransportProxy
 
@@ -2367,6 +2367,11 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
     ) -> _MambaRadixCacheV2TrackEntry:
         server_args = get_server_args()
         mamba_cache_chunk_size = server_args.mamba_cache_chunk_size
+        state_chunk_size = getattr(
+            server_args.get_model_config().hf_config,
+            "mamba_chunk_size",
+            FLA_CHUNK_SIZE,
+        )
 
         def _force_track_h(i: int) -> int:
             assert i % mamba_cache_chunk_size == 0
@@ -2400,14 +2405,15 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                 * mamba_cache_chunk_size
             )
 
-            # mamba_track_fla_chunk_aligned is the aligned seqlen based on mamba_cache_chunk_size
+            # The kernel state tensor ``h`` is emitted at its own chunk
+            # granularity, which can be smaller than the radix-cache/page
+            # boundary (for KDA this is always FLA_CHUNK_SIZE=64).
             # If mamba_track_fla_chunk_aligned != mamba_track_seqlen_aligned, which can be true when
-            # page_size > mamba_cache_chunk_size, we need to force the math calculation to retrieve the correct mamba state from h
+            # page_size > state_chunk_size, we need to force the math calculation to retrieve the correct mamba state from h
             # by _force_track_h()
             mamba_track_fla_chunk_aligned = (
                 len(req.prefix_indices)
-                + (req.extend_range.length // mamba_cache_chunk_size)
-                * mamba_cache_chunk_size
+                + (req.extend_range.length // state_chunk_size) * state_chunk_size
             )
             if mamba_track_fla_chunk_aligned != mamba_track_seqlen_aligned:
                 # We want to track mamba_track_seqlen_aligned, and it's not the last position,

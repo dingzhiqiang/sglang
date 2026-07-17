@@ -1345,6 +1345,7 @@ class TestGoldenModelOverrides(_IsolatedPublish):
                 disable_overlap_schedule=False,
                 page_size=None,
                 linear_attn_backend="triton",
+                linear_attn_prefill_backend=None,
             )
             defaults.update(kw)
             return ResolvedView(
@@ -1440,6 +1441,15 @@ class TestGoldenModelOverrides(_IsolatedPublish):
         self.assertFalse(
             supports_mamba_cache_extra_buffer(
                 SimpleNamespace(linear_attn_backend="fla"), "Qwen3NextForCausalLM"
+            )
+        )
+        self.assertFalse(
+            supports_mamba_cache_extra_buffer(
+                SimpleNamespace(
+                    linear_attn_backend="triton",
+                    linear_attn_prefill_backend="flashkda",
+                ),
+                "BailingMoeV3ForCausalLM",
             )
         )
 

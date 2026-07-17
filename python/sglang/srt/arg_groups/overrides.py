@@ -1015,7 +1015,14 @@ def supports_mamba_cache_extra_buffer(view: Any, model_arch: str) -> bool:
     """Whether ``model_arch`` supports the extra_buffer strategy on the
     configured linear-attention backend (pure read)."""
     if model_arch in _MAMBA_EXTRA_BUFFER_ARCHS:
-        return view.linear_attn_backend == "triton"
+        # Extra-buffer prefill needs intermediate recurrent states (``h``) at
+        # chunk boundaries. Split prefill backends such as FlashKDA/CuteDSL do
+        # not expose them, even when the base/decode backend remains Triton.
+        prefill_backend = (
+            getattr(view, "linear_attn_prefill_backend", None)
+            or view.linear_attn_backend
+        )
+        return prefill_backend == "triton"
     return False
 
 

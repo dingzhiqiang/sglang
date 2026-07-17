@@ -28,6 +28,8 @@ class CuteDSLKDAKernel(LinearAttnKernelBase):
     query :attr:`supports_prefill` and fall back to Triton.
     """
 
+    supports_safe_gate: bool = False
+
     def __init__(self):
         self.supports_prefill = _is_blackwell()
         self._extend_fn: Optional[callable] = None
@@ -104,7 +106,7 @@ class CuteDSLKDAKernel(LinearAttnKernelBase):
         dt_bias: Optional[torch.Tensor] = None,
         lower_bound: Optional[float] = None,
         **kwargs,
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, None]:
         head_k_dim = k.shape[-1]
         self._ensure_extend_loaded(head_k_dim)
 
@@ -142,7 +144,8 @@ class CuteDSLKDAKernel(LinearAttnKernelBase):
 
         ssm_states.index_copy_(0, ssm_cache_indices, final_state.to(ssm_states.dtype))
         # Match chunk_kda's output layout [1, T, HV, V].
-        return o.unsqueeze(0)
+        # CuTeDSL does not expose intermediate chunk states for radix tracking.
+        return o.unsqueeze(0), None
 
     def target_verify(self, *args, **kwargs):
         raise NotImplementedError("CuteDSLKDAKernel does not support target_verify")

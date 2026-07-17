@@ -42,6 +42,7 @@ class KDAKernelDispatcher:
         prefill_backend: LinearAttnKernelBackend,
     ):
         triton_kernel = TritonKDAKernel()
+        self.triton_kernel = triton_kernel
 
         if decode_backend.is_triton():
             self.decode_kernel = triton_kernel
@@ -150,7 +151,12 @@ class KDAKernelDispatcher:
         query_start_loc: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
-        return self.decode_kernel.decode(
+        kernel = self.decode_kernel
+        if kwargs.get("lower_bound") is not None and not getattr(
+            kernel, "supports_safe_gate", True
+        ):
+            kernel = self.triton_kernel
+        return kernel.decode(
             q,
             k,
             v,
@@ -179,7 +185,9 @@ class KDAKernelDispatcher:
         query_start_loc: torch.Tensor,
         **kwargs,
     ) -> torch.Tensor:
-        return self.decode_kernel.target_verify(
+        # Target verify needs rollback/intermediate-state support. Keep it on
+        # Triton even when a faster decode-only backend was selected.
+        return self.triton_kernel.target_verify(
             A_log=A_log,
             dt_bias=dt_bias,
             q=q,
@@ -206,7 +214,12 @@ class KDAKernelDispatcher:
         query_start_loc: torch.Tensor,
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        return self.extend_kernel.extend(
+        kernel = self.extend_kernel
+        if kwargs.get("lower_bound") is not None and not getattr(
+            kernel, "supports_safe_gate", True
+        ):
+            kernel = self.triton_kernel
+        return kernel.extend(
             q,
             k,
             v,
