@@ -1321,12 +1321,25 @@ def quantize_block_fp8_weight_to_mxfp4(
     fp8_scale: torch.Tensor,
     weight_block_size: List[int],
     mxfp4_block_size: int = 32,
+    dequant_dtype: torch.dtype = torch.bfloat16,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Convert a block-FP8 weight into canonical MXFP4 weight and scale tensors.
+
+    ``dequant_dtype`` controls the intermediate reconstruction of the block-FP8
+    weight. Runtime conversions retain the historical BF16 default, while
+    offline checkpoint conversion should use FP32 to avoid an extra BF16
+    rounding step at MXFP4 bucket boundaries.
+    """
+    if dequant_dtype not in (torch.bfloat16, torch.float32):
+        raise ValueError(
+            f"dequant_dtype must be torch.bfloat16 or torch.float32, got "
+            f"{dequant_dtype}."
+        )
     fp8_weight_dequant = block_quant_dequant(
         fp8_weight,
         fp8_scale.to(torch.float32),
         weight_block_size,
-        torch.bfloat16,
+        dequant_dtype,
     )
     fp4_weight, fp4_scale = _MXFP4QuantizedData.quantize(
         fp8_weight_dequant, block_size=mxfp4_block_size
