@@ -577,6 +577,7 @@ class BailingMoE(nn.Module):
             ),
             num_fused_shared_experts=self.num_fused_shared_experts,
             fused_shared_experts_scaling_factor=fused_shared_experts_scaling_factor,
+            is_fp4_experts=getattr(quant_config, "is_fp4_experts", False),
         )
 
         # Whether to apply routed_scaling_factor at model layer.
@@ -1715,7 +1716,8 @@ class BailingMoeV3ForCausalLM(nn.Module):
             range(
                 self.config.first_k_dense_replace,
                 self.config.num_hidden_layers,
-                self.config.moe_layer_freq,
+                getattr(self.config, "moe_layer_freq", 1),
+                # self.config.moe_layer_freq,
             )
         )
 

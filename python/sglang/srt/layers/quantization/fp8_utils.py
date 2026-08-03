@@ -1316,6 +1316,51 @@ def block_quant_dequant(
     return (x_q_block.to(torch.float32) * x_scale_repeat).to(dtype)
 
 
+def quantize_weight_to_mxfp4(
+    weight: torch.Tensor,
+    mxfp4_block_size: int = 32,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """
+    Quantize FP -> MXFP4. E8M0 for scale
+    """
+    if weight.ndim < 1:
+        raise ValueError(f"weight must have at least one dimension, got {weight.shape}.")
+    if weight.dtype not in (torch.bfloat16, torch.float16, torch.float32):
+        raise TypeError(
+            "weight must be bfloat16, float16, or float32, got "
+            f"{weight.dtype}."
+        )
+    if mxfp4_block_size != 32:
+        raise ValueError("MXFP4 requires mxfp4_block_size=32.")
+
+    k = weight.shape[-1]
+    if k == 0:
+        raise ValueError("Weight K dimension must be nonzero.")
+    if k % mxfp4_block_size != 0:
+        raise ValueError(
+            f"Weight K dimension {k} must be divisible by MXFP4 group size "
+            f"{mxfp4_block_size}."
+        )
+
+    weight_f32 = weight.to(torch.float32).contiguous()
+    if not torch.all(torch.isfinite(weight_f32)):
+        raise ValueError("weight must contain only finite values.")
+    fp4_weight, fp4_scale = _MXFP4QuantizedData.quantize(
+        weight_f32,
+        block_size=mxfp4_block_size,
+    )
+    packed_weight = fp4_weight.quantized_data.reshape(
+        *weight.shape[:-1], k // 2
+    )
+    packed_scale = fp4_scale.reshape(
+        *weight.shape[:-1], k // mxfp4_block_size
+    )
+    return (
+        packed_weight.contiguous().view(torch.int8),
+        packed_scale.contiguous().view(torch.float8_e8m0fnu),
+    )
+
+
 def quantize_block_fp8_weight_to_mxfp4(
     fp8_weight: torch.Tensor,
     fp8_scale: torch.Tensor,
