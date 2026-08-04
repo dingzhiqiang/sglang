@@ -825,6 +825,10 @@ class HybridLinearAttnBackend(AttentionBackend):
         self.token_to_kv_pool = full_attn_backend.token_to_kv_pool
         self.req_to_token_pool = full_attn_backend.req_to_token_pool
         self.max_context_len = getattr(full_attn_backend, "max_context_len", None)
+        self.data_type = getattr(full_attn_backend, "data_type", None)
+        self.kv_cache_dtype = getattr(
+            full_attn_backend, "kv_cache_dtype", self.data_type
+        )
         self.needs_cpu_seq_lens = (
             full_attn_backend.needs_cpu_seq_lens
             or linear_attn_backend.needs_cpu_seq_lens
