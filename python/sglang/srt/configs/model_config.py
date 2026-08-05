@@ -322,9 +322,6 @@ class ModelConfig:
         # Config draft model
         self._config_draft_model()
 
-        # Mixed FP8/MXFP4 checkpoints can explicitly mark routed experts as
-        # MXFP4 while keeping dense and shared-expert tensors in their original
-        # FP8/BF16 formats.
         quantization_config = (
             getattr(self.hf_config, "quantization_config", None) or {}
         )
