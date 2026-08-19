@@ -63,6 +63,8 @@ class Mxfp4FlashinferCutlassMoEMethod:
     grouped GEMM. The fused kernel does GEMM1 + clamped SwiGLU + GEMM2 in one
     call after a one-shot weight/scale interleave at load time."""
 
+    fuse_routed_scaling_factor_in_topk = True
+
     def __init__(self, fp8_method, prefix: str):
         if not _FI_HAS_SM90_CUTLASS_MXFP4:
             raise RuntimeError(
