@@ -446,6 +446,12 @@ def maybe_fuse_routed_scale_and_shared_add(
     shared: torch.Tensor | None,
     routed_scaling_factor: float,
 ) -> torch.Tensor:
+    # The routed output is already scaled, so only add the unscaled shared-expert.
+    if getattr(experts, "should_fuse_routed_scaling_factor_in_topk", False):
+        if shared is not None:
+            return shared.add_(routed)
+        return routed
+
     # When MxFP4 fusion is on, the upstream `routed *= scale` is skipped and
     # the scaling is folded into the shared-add via `shared.add_(routed,
     # alpha=scale)`. With no shared output, the missing scale is applied

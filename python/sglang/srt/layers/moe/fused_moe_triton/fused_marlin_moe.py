@@ -53,6 +53,23 @@ def swiglu_limit_func(
     output.copy_(F.silu(gate) * up)
 
 
+def swiglu_step_limit_func(
+    output: torch.Tensor,
+    input: torch.Tensor,
+    swiglu_limit: float = 0.0,
+) -> None:
+    # Bailing SwiGLU
+    d = input.shape[1] // 2
+    gate = F.silu(input[:, :d])
+    up = input[:, d:]
+
+    if swiglu_limit > 0:
+        gate = torch.clamp(gate, max=swiglu_limit)
+        up = torch.clamp(up, min=-swiglu_limit, max=swiglu_limit)
+
+    output.copy_(gate * up)
+
+
 def swiglu_gpt_oss_sigmoid_alpha_contiguous(
     output: torch.Tensor,
     input: torch.Tensor,  # first half is gate, second half is up
@@ -93,6 +110,7 @@ def fused_marlin_moe(
     inplace: bool = False,
     routed_scaling_factor: Optional[float] = None,
     clamp_limit: Optional[float] = None,
+    clamp_after_silu: bool = False,
     gemm1_alpha: Optional[float] = None,
     activation: str = "silu",
     is_gated: bool = True,
@@ -258,7 +276,8 @@ def fused_marlin_moe(
             clamp_limit,
         )
     elif activation == "silu" and is_gated and clamp_limit is not None:
-        swiglu_limit_func(
+        limit_func = swiglu_step_limit_func if clamp_after_silu else swiglu_limit_func
+        limit_func(
             intermediate_cache2,
             intermediate_cache1.view(-1, gemm1_n),
             clamp_limit,

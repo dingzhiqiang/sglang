@@ -153,8 +153,12 @@ def fused_experts_none_to_marlin(
         routed_scaling_factor=runner_config.routed_scaling_factor,
         clamp_limit=(
             runner_config.gemm1_clamp_limit
-            if runner_config.gemm1_alpha is not None
+            if runner_config.gemm1_clamp_limit is not None
             else runner_config.swiglu_limit
+        ),
+        clamp_after_silu=(
+            runner_config.gemm1_alpha is None
+            and runner_config.gemm1_clamp_limit is not None
         ),
         gemm1_alpha=runner_config.gemm1_alpha,
         activation=runner_config.activation,
