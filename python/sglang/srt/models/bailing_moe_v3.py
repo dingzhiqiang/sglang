@@ -229,6 +229,16 @@ LoraConfig = None
 logger = logging.getLogger(__name__)
 
 
+def _resolve_rope_config(
+    config: PretrainedConfig,
+) -> Tuple[float, Optional[Dict[str, Any]]]:
+    """Resolve both legacy Ling and Transformers v5 RoPE config layouts."""
+    rope_parameters = getattr(config, "rope_parameters", None)
+    if rope_parameters is not None:
+        return rope_parameters.get("rope_theta", 600000), rope_parameters
+    return getattr(config, "rope_theta", 600000), getattr(config, "rope_scaling", None)
+
+
 def is_linear_layer(layer_idx, layer_group_size):
     if layer_idx is None:
         return False
@@ -918,12 +928,13 @@ class BailingMoEAttention(nn.Module):
         else:
             self.rotary_dim = self.head_dim
         self.max_position_embeddings = config.max_position_embeddings
+        rope_theta, rope_scaling = _resolve_rope_config(config)
         self.rotary_emb = get_rope(
             self.head_dim,
             rotary_dim=self.rotary_dim,
             max_position=self.max_position_embeddings,
-            base=config.rope_parameters.get("rope_theta", 600000),
-            rope_scaling=config.rope_parameters,
+            base=rope_theta,
+            rope_scaling=rope_scaling,
             dtype=torch.float32,
         )
         self.attn = RadixAttention(
@@ -996,6 +1007,7 @@ class BailingMoELinearDecoderLayer(nn.Module):
             )
         elif config.attention_type == 1:  # softmax layer
             if self.use_mla:
+                rope_theta, rope_scaling = _resolve_rope_config(config)
                 self.attention = DsV3MLA(
                     config=config,
                     hidden_size=config.hidden_size,
@@ -1007,8 +1019,8 @@ class BailingMoELinearDecoderLayer(nn.Module):
                         config.q_lora_rank if hasattr(config, "q_lora_rank") else None
                     ),
                     kv_lora_rank=config.kv_lora_rank,
-                    rope_theta=config.rope_parameters.get("rope_theta", 600000),
-                    rope_scaling=config.rope_parameters,
+                    rope_theta=rope_theta,
+                    rope_scaling=rope_scaling,
                     max_position_embeddings=262144,
                     quant_config=quant_config,
                     layer_id=layer_id,
@@ -1438,7 +1450,7 @@ class BailingMoeV3ForCausalLM(nn.Module):
                 "Only Bailing MoE V3 on NV-platform with capability >= 80 "
                 "or AMD-platform with capability >= gfx942(MI30x) can use shared experts fusion optimization."
             )
-        # Shared experts remain in their original format 
+        # Shared experts remain in their original format
         # and therefore cannot share a fused MoE weight tensor.
         elif self.quant_config and (
             self.quant_config.get_name() == "w4afp8"

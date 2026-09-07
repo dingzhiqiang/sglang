@@ -1,3 +1,4 @@
+import inspect
 import logging
 import os
 from typing import Optional, Union
@@ -16,15 +17,64 @@ SGL_FA3_KERNEL_REVISION = "v1"
 DEFAULT_FA3_KERNEL_LOCKFILE = "kernels.lock"
 
 
-def _call_fa3_kernel(kernel, *args, out=None, **kwargs):
-    if out is None:
-        return kernel(*args, **kwargs)
+def _is_default_optional_kwarg(name, value):
+    if name == "out":
+        # Older kernels may not support writing into a caller-provided output
+        # tensor. Returning a newly allocated output matches the old fallback.
+        return True
+    if name == "only_qv":
+        # Dropping only_qv=True would change the rope=0 path semantics.
+        return value is False
+    return False
+
+
+def _is_call_binding_error(kernel, args, kwargs, unsupported):
+    """Return whether TypeError came from binding kwargs to ``kernel``.
+
+    Python callables expose enough signature information to distinguish an
+    unsupported top-level argument from a TypeError raised inside the kernel.
+    Callables without an inspectable signature fail closed: their error text
+    alone cannot distinguish binding failures from internal kernel errors.
+    """
     try:
-        return kernel(*args, **kwargs, out=out)
+        signature = inspect.signature(kernel, follow_wrapped=False)
+    except (TypeError, ValueError):
+        return False
+
+    try:
+        signature.bind(*args, **kwargs)
     except TypeError as exc:
-        if "unexpected keyword argument 'out'" not in str(exc):
-            raise
-        return kernel(*args, **kwargs)
+        return f"'{unsupported}'" in str(exc)
+    return False
+
+
+def _call_fa3_kernel(kernel, *args, out=None, **kwargs):
+    call_kwargs = dict(kwargs)
+    if out is not None:
+        call_kwargs["out"] = out
+
+    while True:
+        try:
+            return kernel(*args, **call_kwargs)
+        except TypeError as exc:
+            if exc.__traceback__.tb_next is not None:
+                raise
+            marker = "unexpected keyword argument '"
+            message = str(exc)
+            if marker not in message:
+                raise
+            unsupported = message.split(marker, 1)[1].split("'", 1)[0]
+            if unsupported not in call_kwargs:
+                raise
+            if not _is_call_binding_error(kernel, args, call_kwargs, unsupported):
+                raise
+            value = call_kwargs[unsupported]
+            if not _is_default_optional_kwarg(unsupported, value):
+                raise TypeError(
+                    f"FA3 kernel {kernel} does not support required argument "
+                    f"{unsupported}={value!r}"
+                ) from exc
+            call_kwargs.pop(unsupported)
 
 
 @cache_once
